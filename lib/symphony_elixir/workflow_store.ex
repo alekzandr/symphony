@@ -165,14 +165,14 @@ defmodule SymphonyElixir.WorkflowStore do
             {:ok, {stat.mtime, stat.size, :erlang.phash2(content)}}
 
           {:error, reason} ->
-            {:error, reason}
+            {:error, {:config_file_read_error, path, reason}}
         end
 
       {:error, :enoent} ->
         {:ok, :missing}
 
       {:error, reason} ->
-        {:error, reason}
+        {:error, {:config_file_stat_error, path, reason}}
     end
   end
 
