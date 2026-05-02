@@ -1,6 +1,6 @@
 defmodule SymphonyElixir.Config do
   @moduledoc """
-  Runtime configuration loaded from `WORKFLOW.md`.
+  Runtime configuration loaded from `WORKFLOW.md` and its optional `config.yaml` overlay.
   """
 
   alias SymphonyElixir.Config.Schema
@@ -83,6 +83,12 @@ defmodule SymphonyElixir.Config do
     end
   end
 
+  @spec codex_startup_command() :: String.t()
+  def codex_startup_command do
+    settings = settings!()
+    settings.codex.command <> render_codex_config_overrides(settings.codex.config)
+  end
+
   @spec server_port() :: non_neg_integer() | nil
   def server_port do
     case Application.get_env(:symphony_elixir, :server_port_override) do
@@ -147,8 +153,42 @@ defmodule SymphonyElixir.Config do
       :workflow_front_matter_not_a_map ->
         "Failed to parse WORKFLOW.md: workflow front matter must decode to a map"
 
+      {:config_file_parse_error, path, raw_reason} ->
+        "Failed to parse config.yaml at #{path}: #{inspect(raw_reason)}"
+
+      {:config_file_not_a_map, path} ->
+        "Failed to parse config.yaml at #{path}: config must decode to a map"
+
+      {:config_file_read_error, path, raw_reason} ->
+        "Failed to read config.yaml at #{path}: #{inspect(raw_reason)}"
+
       other ->
         "Invalid WORKFLOW.md config: #{inspect(other)}"
     end
+  end
+
+  defp render_codex_config_overrides(config) when config in [nil, %{}], do: ""
+
+  defp render_codex_config_overrides(config) when is_map(config) do
+    config
+    |> flatten_codex_config([])
+    |> Enum.sort_by(&elem(&1, 0))
+    |> Enum.map_join("", fn {path, value} ->
+      " --config " <> shell_escape(path <> "=" <> Jason.encode!(value))
+    end)
+  end
+
+  defp flatten_codex_config(nil, path), do: [{Enum.join(path, "."), nil}]
+
+  defp flatten_codex_config(config, path) when is_map(config) do
+    Enum.flat_map(config, fn {key, value} ->
+      flatten_codex_config(value, path ++ [to_string(key)])
+    end)
+  end
+
+  defp flatten_codex_config(value, path), do: [{Enum.join(path, "."), value}]
+
+  defp shell_escape(value) when is_binary(value) do
+    "'" <> String.replace(value, "'", "'\"'\"'") <> "'"
   end
 end

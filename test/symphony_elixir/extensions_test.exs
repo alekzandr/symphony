@@ -127,6 +127,71 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert {:ok, _pid} = Supervisor.restart_child(SymphonyElixir.Supervisor, WorkflowStore)
   end
 
+  test "workflow store reloads companion config.yaml changes" do
+    ensure_workflow_store_running()
+
+    config_path = Workflow.config_file_path()
+
+    File.write!(
+      config_path,
+      """
+      codex:
+        config:
+          model: gpt-5.5
+          model_provider: openai
+          openai_base_url: https://api.openai.com/v1
+      """
+    )
+
+    assert_eventually(fn ->
+      Config.settings!().codex.config == %{
+        "model" => "gpt-5.5",
+        "model_provider" => "openai",
+        "openai_base_url" => "https://api.openai.com/v1"
+      }
+    end)
+
+    state = :sys.get_state(WorkflowStore)
+
+    File.write!(
+      config_path,
+      """
+      codex:
+        config:
+          model: gpt-oss:20b
+          model_provider: local_ollama
+          model_providers:
+            local_ollama:
+              base_url: http://127.0.0.1:11434/v1
+      """
+    )
+
+    assert {:noreply, new_state} = WorkflowStore.handle_info(:poll, state)
+
+    assert new_state.workflow.config["codex"]["config"]["model"] == "gpt-oss:20b"
+    assert new_state.workflow.config["codex"]["config"]["model_provider"] == "local_ollama"
+    assert Config.codex_startup_command() =~ "--config 'model=\"gpt-oss:20b\"'"
+  end
+
+  test "workflow store keeps the last good workflow when config.yaml becomes unreadable or loops" do
+    ensure_workflow_store_running()
+
+    config_path = Workflow.config_file_path()
+    state = :sys.get_state(WorkflowStore)
+    assert {:ok, %{prompt: baseline_prompt}} = Workflow.current()
+
+    File.mkdir!(config_path)
+
+    assert {:noreply, dir_error_state} = WorkflowStore.handle_info(:poll, state)
+    assert dir_error_state.workflow.prompt == baseline_prompt
+
+    File.rm_rf!(config_path)
+    File.ln_s!("config.yaml", config_path)
+
+    assert {:noreply, loop_error_state} = WorkflowStore.handle_info(:poll, dir_error_state)
+    assert loop_error_state.workflow.prompt == baseline_prompt
+  end
+
   test "workflow store init stops on missing workflow file" do
     missing_path = Path.join(Path.dirname(Workflow.workflow_file_path()), "MISSING_WORKFLOW.md")
     Workflow.set_workflow_file_path(missing_path)
@@ -261,7 +326,8 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert_receive {:graphql_called, state_lookup_query, %{issueId: "issue-1", stateName: "Done"}}
     assert state_lookup_query =~ "states"
 
-    assert_receive {:graphql_called, update_issue_query, %{issueId: "issue-1", stateId: "state-1"}}
+    assert_receive {:graphql_called, update_issue_query,
+                    %{issueId: "issue-1", stateId: "state-1"}}
 
     assert update_issue_query =~ "issueUpdate"
 
@@ -354,7 +420,8 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "turn_count" => 7,
                  "last_event" => "notification",
                  "last_message" => "rendered",
-                 "started_at" => state_payload["running"] |> List.first() |> Map.fetch!("started_at"),
+                 "started_at" =>
+                   state_payload["running"] |> List.first() |> Map.fetch!("started_at"),
                  "last_event_at" => nil,
                  "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
                }
@@ -632,7 +699,9 @@ defmodule SymphonyElixir.ExtensionsTest do
       snapshot_timeout_ms: 50
     ]
 
-    start_supervised!({StaticOrchestrator, name: orchestrator_name, snapshot: snapshot, refresh: refresh})
+    start_supervised!(
+      {StaticOrchestrator, name: orchestrator_name, snapshot: snapshot, refresh: refresh}
+    )
 
     start_supervised!({HttpServer, server_opts})
 

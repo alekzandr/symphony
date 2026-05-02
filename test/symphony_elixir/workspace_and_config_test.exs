@@ -85,7 +85,10 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       assert File.read!(Path.join(second_workspace, "README.md")) == "changed\n"
       assert File.read!(Path.join(second_workspace, "local-progress.txt")) == "in progress\n"
       assert File.read!(Path.join([second_workspace, "deps", "cache.txt"])) == "cached deps\n"
-      assert File.read!(Path.join([second_workspace, "_build", "artifact.txt"])) == "compiled artifact\n"
+
+      assert File.read!(Path.join([second_workspace, "_build", "artifact.txt"])) ==
+               "compiled artifact\n"
+
       assert File.read!(Path.join([second_workspace, "tmp", "scratch.txt"])) == "remove me\n"
     after
       File.rm_rf(workspace_root)
@@ -134,9 +137,12 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       write_workflow_file!(Workflow.workflow_file_path(), workspace_root: workspace_root)
 
       assert {:ok, canonical_outside_root} = SymphonyElixir.PathSafety.canonicalize(outside_root)
-      assert {:ok, canonical_workspace_root} = SymphonyElixir.PathSafety.canonicalize(workspace_root)
 
-      assert {:error, {:workspace_outside_root, ^canonical_outside_root, ^canonical_workspace_root}} =
+      assert {:ok, canonical_workspace_root} =
+               SymphonyElixir.PathSafety.canonicalize(workspace_root)
+
+      assert {:error,
+              {:workspace_outside_root, ^canonical_outside_root, ^canonical_workspace_root}} =
                Workspace.create_for_issue("MT-SYM")
     after
       File.rm_rf(test_root)
@@ -184,7 +190,8 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
       assert {:ok, canonical_workspace_root} =
                SymphonyElixir.PathSafety.canonicalize(workspace_root)
 
-      assert {:error, {:workspace_equals_root, ^canonical_workspace_root, ^canonical_workspace_root}, ""} =
+      assert {:error,
+              {:workspace_equals_root, ^canonical_workspace_root, ^canonical_workspace_root}, ""} =
                Workspace.remove(workspace_root)
     after
       File.rm_rf(workspace_root)
@@ -262,7 +269,9 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     try do
       target_workspace = Path.join(workspace_root, "S_1")
-      untouched_workspace = Path.join(workspace_root, "OTHER-#{System.unique_integer([:positive])}")
+
+      untouched_workspace =
+        Path.join(workspace_root, "OTHER-#{System.unique_integer([:positive])}")
 
       File.mkdir_p!(target_workspace)
       File.mkdir_p!(untouched_workspace)
@@ -423,10 +432,13 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     assert Enum.map(issues, & &1.id) == issue_ids
 
-    assert_receive {:fetch_issue_states_page, query, %{ids: ^first_batch_ids, first: 50, relationFirst: 50}}
+    assert_receive {:fetch_issue_states_page, query,
+                    %{ids: ^first_batch_ids, first: 50, relationFirst: 50}}
+
     assert query =~ "SymphonyLinearIssuesById"
 
-    assert_receive {:fetch_issue_states_page, ^query, %{ids: ^second_batch_ids, first: 5, relationFirst: 50}}
+    assert_receive {:fetch_issue_states_page, ^query,
+                    %{ids: ^second_batch_ids, first: 5, relationFirst: 50}}
   end
 
   test "linear client logs response bodies for non-200 graphql responses" do
@@ -581,7 +593,10 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
              Orchestrator.revalidate_issue_for_dispatch_for_test(stale_issue, fetcher)
 
     assert skipped_issue.identifier == "MT-1005"
-    assert skipped_issue.blocked_by == [%{id: "blocker-3", identifier: "MT-1006", state: "In Progress"}]
+
+    assert skipped_issue.blocked_by == [
+             %{id: "blocker-3", identifier: "MT-1006", state: "In Progress"}
+           ]
   end
 
   test "workspace remove returns error information for missing directory" do
@@ -610,7 +625,8 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
       write_workflow_file!(Workflow.workflow_file_path(),
         workspace_root: workspace_root,
-        hook_after_create: "echo after_create > after_create.log\necho call >> \"#{after_create_counter}\"",
+        hook_after_create:
+          "echo after_create > after_create.log\necho call >> \"#{after_create_counter}\"",
         hook_before_remove: "echo before_remove > \"#{before_remove_marker}\""
       )
 
@@ -745,6 +761,7 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert config.worker.max_concurrent_agents_per_host == nil
     assert config.agent.max_concurrent_agents == 10
     assert config.codex.command == "codex app-server"
+    assert config.codex.config == %{}
 
     assert config.codex.approval_policy == %{
              "reject" => %{
@@ -757,7 +774,9 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert config.codex.thread_sandbox == "workspace-write"
 
     assert {:ok, canonical_default_workspace_root} =
-             SymphonyElixir.PathSafety.canonicalize(Path.join(System.tmp_dir!(), "symphony_workspaces"))
+             SymphonyElixir.PathSafety.canonicalize(
+               Path.join(System.tmp_dir!(), "symphony_workspaces")
+             )
 
     assert Config.codex_turn_sandbox_policy() == %{
              "type" => "workspaceWrite",
@@ -885,6 +904,183 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
     write_workflow_file!(Workflow.workflow_file_path(), codex_command: "codex app-server")
     assert Config.settings!().codex.command == "codex app-server"
+  end
+
+  test "config renders structured codex overrides into the startup command" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      codex_command: "codex app-server",
+      codex_config: %{
+        model: "gpt-oss:20b",
+        model_provider: "local_ollama",
+        model_providers: %{
+          local_ollama: %{
+            name: "Ollama",
+            base_url: "http://127.0.0.1:11434/v1"
+          }
+        }
+      }
+    )
+
+    assert Config.settings!().codex.config == %{
+             "model" => "gpt-oss:20b",
+             "model_provider" => "local_ollama",
+             "model_providers" => %{
+               "local_ollama" => %{
+                 "name" => "Ollama",
+                 "base_url" => "http://127.0.0.1:11434/v1"
+               }
+             }
+           }
+
+    startup_command = Config.codex_startup_command()
+
+    assert String.starts_with?(startup_command, "codex app-server")
+    assert startup_command =~ "--config 'model=\"gpt-oss:20b\"'"
+    assert startup_command =~ "--config 'model_provider=\"local_ollama\"'"
+    assert startup_command =~ "--config 'model_providers.local_ollama.name=\"Ollama\"'"
+
+    assert startup_command =~
+             "--config 'model_providers.local_ollama.base_url=\"http://127.0.0.1:11434/v1\"'"
+  end
+
+  test "config preserves explicit nil values inside codex.config overrides" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      codex_command: "codex app-server",
+      codex_config: %{
+        model: nil,
+        model_provider: "local_ollama",
+        model_providers: %{
+          local_ollama: %{
+            wire_api: nil
+          }
+        }
+      }
+    )
+
+    assert Config.settings!().codex.config == %{
+             "model" => nil,
+             "model_provider" => "local_ollama",
+             "model_providers" => %{
+               "local_ollama" => %{
+                 "wire_api" => nil
+               }
+             }
+           }
+
+    startup_command = Config.codex_startup_command()
+
+    assert startup_command =~ "--config 'model=null'"
+    assert startup_command =~ "--config 'model_provider=\"local_ollama\"'"
+    assert startup_command =~ "--config 'model_providers.local_ollama.wire_api=null'"
+  end
+
+  test "config.yaml overlays codex config next to WORKFLOW.md" do
+    write_workflow_file!(Workflow.workflow_file_path(), codex_command: "codex app-server")
+
+    File.write!(
+      Workflow.config_file_path(),
+      """
+      codex:
+        config:
+          model: gpt-5.5
+          model_provider: openai
+          openai_base_url: https://api.openai.com/v1
+      """
+    )
+
+    assert Config.settings!().codex.config == %{
+             "model" => "gpt-5.5",
+             "model_provider" => "openai",
+             "openai_base_url" => "https://api.openai.com/v1"
+           }
+
+    startup_command = Config.codex_startup_command()
+
+    assert startup_command =~ "--config 'model=\"gpt-5.5\"'"
+    assert startup_command =~ "--config 'model_provider=\"openai\"'"
+    assert startup_command =~ "--config 'openai_base_url=\"https://api.openai.com/v1\"'"
+  end
+
+  test "config.yaml partially overlays inline codex config without dropping sibling keys" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      codex_command: "codex app-server",
+      codex_config: %{
+        shell_environment_policy: %{inherit: "all"},
+        model: "gpt-5.5",
+        model_provider: "openai",
+        model_providers: %{
+          openai: %{
+            name: "OpenAI",
+            base_url: "https://api.openai.com/v1"
+          },
+          local_ollama: %{
+            name: "Ollama"
+          }
+        }
+      }
+    )
+
+    File.write!(
+      Workflow.config_file_path(),
+      """
+      codex:
+        config:
+          model: gpt-oss:20b
+          model_provider: local_ollama
+          model_providers:
+            local_ollama:
+              base_url: http://127.0.0.1:11434/v1
+      """
+    )
+
+    assert Config.settings!().codex.config == %{
+             "shell_environment_policy" => %{"inherit" => "all"},
+             "model" => "gpt-oss:20b",
+             "model_provider" => "local_ollama",
+             "model_providers" => %{
+               "openai" => %{
+                 "name" => "OpenAI",
+                 "base_url" => "https://api.openai.com/v1"
+               },
+               "local_ollama" => %{
+                 "name" => "Ollama",
+                 "base_url" => "http://127.0.0.1:11434/v1"
+               }
+             }
+           }
+
+    startup_command = Config.codex_startup_command()
+
+    assert startup_command =~ "--config 'shell_environment_policy.inherit=\"all\"'"
+    assert startup_command =~ "--config 'model=\"gpt-oss:20b\"'"
+    assert startup_command =~ "--config 'model_provider=\"local_ollama\"'"
+    assert startup_command =~ "--config 'model_providers.local_ollama.name=\"Ollama\"'"
+
+    assert startup_command =~
+             "--config 'model_providers.local_ollama.base_url=\"http://127.0.0.1:11434/v1\"'"
+
+    assert startup_command =~
+             "--config 'model_providers.openai.base_url=\"https://api.openai.com/v1\"'"
+  end
+
+  test "config.yaml error paths are reported when the overlay is unreadable or malformed" do
+    workflow_path = Workflow.workflow_file_path()
+    config_path = Workflow.config_file_path()
+
+    write_workflow_file!(workflow_path, codex_command: "codex app-server")
+
+    File.mkdir!(config_path)
+
+    assert {:error, {:config_file_read_error, ^config_path, _}} = Workflow.load(workflow_path)
+
+    File.rm_rf!(config_path)
+    File.write!(config_path, "- not-a-map\n")
+
+    assert {:error, {:config_file_not_a_map, ^config_path}} = Workflow.load(workflow_path)
+
+    File.write!(config_path, "codex: [\n")
+
+    assert {:error, {:config_file_parse_error, ^config_path, _}} = Workflow.load(workflow_path)
   end
 
   test "config resolves $VAR references for env-backed secret and path values" do
@@ -1205,7 +1401,10 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
       read_only_settings = %{
         settings
-        | codex: %{settings.codex | turn_sandbox_policy: %{"type" => "readOnly", "networkAccess" => true}}
+        | codex: %{
+            settings.codex
+            | turn_sandbox_policy: %{"type" => "readOnly", "networkAccess" => true}
+          }
       }
 
       assert {:ok, %{"type" => "readOnly", "networkAccess" => true}} =
@@ -1213,7 +1412,10 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
 
       future_settings = %{
         settings
-        | codex: %{settings.codex | turn_sandbox_policy: %{"type" => "futureSandbox", "nested" => %{"flag" => true}}}
+        | codex: %{
+            settings.codex
+            | turn_sandbox_policy: %{"type" => "futureSandbox", "nested" => %{"flag" => true}}
+          }
       }
 
       assert {:ok, %{"type" => "futureSandbox", "nested" => %{"flag" => true}}} =

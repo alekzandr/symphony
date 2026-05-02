@@ -1,6 +1,7 @@
 defmodule SymphonyElixir.WorkflowStore do
   @moduledoc """
-  Caches the last known good workflow and reloads it when `WORKFLOW.md` changes.
+  Caches the last known good workflow and reloads it when `WORKFLOW.md` or its
+  companion `config.yaml` changes.
   """
 
   use GenServer
@@ -139,6 +140,15 @@ defmodule SymphonyElixir.WorkflowStore do
   end
 
   defp current_stamp(path) when is_binary(path) do
+    with {:ok, workflow_stamp} <- file_stamp(path),
+         {:ok, config_stamp} <- optional_file_stamp(Workflow.config_file_path(path)) do
+      {:ok, {workflow_stamp, config_stamp}}
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp file_stamp(path) do
     with {:ok, stat} <- File.stat(path, time: :posix),
          {:ok, content} <- File.read(path) do
       {:ok, {stat.mtime, stat.size, :erlang.phash2(content)}}
@@ -147,7 +157,28 @@ defmodule SymphonyElixir.WorkflowStore do
     end
   end
 
+  defp optional_file_stamp(path) do
+    case File.stat(path, time: :posix) do
+      {:ok, stat} ->
+        case File.read(path) do
+          {:ok, content} ->
+            {:ok, {stat.mtime, stat.size, :erlang.phash2(content)}}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      {:error, :enoent} ->
+        {:ok, :missing}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   defp log_reload_error(path, reason) do
-    Logger.error("Failed to reload workflow path=#{path} reason=#{inspect(reason)}; keeping last known good configuration")
+    Logger.error(
+      "Failed to reload workflow path=#{path} reason=#{inspect(reason)}; keeping last known good configuration"
+    )
   end
 end

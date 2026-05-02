@@ -142,9 +142,39 @@ hooks:
   after_create: |
     git clone --depth 1 "$SOURCE_REPO_URL" .
 codex:
-  command: "$CODEX_BIN --config 'model=\"gpt-5.5\"' app-server"
+  command: "$CODEX_BIN app-server"
+  config:
+    shell_environment_policy:
+      inherit: all
+    model: gpt-5.5
+    model_reasoning_effort: xhigh
 ```
 
+Keep provider-specific overrides in a same-directory `config.yaml` next to `WORKFLOW.md`:
+
+```yaml
+codex:
+  config:
+    model: gpt-oss:20b
+    model_provider: local_ollama
+    model_providers:
+      local_ollama:
+        name: Ollama
+        base_url: http://127.0.0.1:11434/v1
+```
+
+Switch back to OpenAI-compatible endpoints with:
+
+```yaml
+codex:
+  config:
+    model: gpt-5.5
+    model_provider: openai
+    openai_base_url: https://api.openai.com/v1
+```
+
+- `codex.config` can live inline in `WORKFLOW.md` or in a same-directory `config.yaml`; Symphony
+  merges the overlay before startup and when the workflow store reloads.
 - If `WORKFLOW.md` is missing or has invalid YAML at startup, Symphony does not boot.
 - If a later reload fails, Symphony keeps running with the last known good workflow and logs the
   reload error until the file is fixed.
@@ -165,6 +195,7 @@ The observability UI now runs on a minimal Phoenix stack:
 - `lib/`: application code and Mix tasks
 - `test/`: ExUnit coverage for runtime behavior
 - `WORKFLOW.md`: in-repo workflow contract used by local runs
+- `config.yaml`: optional same-directory overlay for Codex provider/model settings
 - `../.codex/`: repository-local Codex skills and setup helpers
 
 ## Testing
