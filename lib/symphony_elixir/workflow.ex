@@ -1,16 +1,23 @@
 defmodule SymphonyElixir.Workflow do
   @moduledoc """
-  Loads workflow configuration and prompt from WORKFLOW.md.
+  Loads workflow configuration and prompt from WORKFLOW.md and a same-directory config.yaml overlay.
   """
 
   alias SymphonyElixir.WorkflowStore
 
   @workflow_file_name "WORKFLOW.md"
+  @config_file_name "config.yaml"
 
   @spec workflow_file_path() :: Path.t()
   def workflow_file_path do
     Application.get_env(:symphony_elixir, :workflow_file_path) ||
       Path.join(File.cwd!(), @workflow_file_name)
+  end
+
+  @spec config_file_path(Path.t() | nil) :: Path.t()
+  def config_file_path(workflow_path \\ nil) do
+    workflow_path = workflow_path || workflow_file_path()
+    Path.join(Path.dirname(workflow_path), @config_file_name)
   end
 
   @spec set_workflow_file_path(Path.t()) :: :ok
@@ -53,7 +60,10 @@ defmodule SymphonyElixir.Workflow do
   def load(path) when is_binary(path) do
     case File.read(path) do
       {:ok, content} ->
-        parse(content)
+        with {:ok, workflow} <- parse(content),
+             {:ok, config_overlay} <- load_config_overlay(config_file_path(path)) do
+          {:ok, merge_workflow_config(workflow, config_overlay)}
+        end
 
       {:error, reason} ->
         {:error, {:missing_workflow_file, path, reason}}
@@ -100,8 +110,35 @@ defmodule SymphonyElixir.Workflow do
   end
 
   defp front_matter_yaml_to_map(lines) do
-    yaml = Enum.join(lines, "\n")
+    yaml_to_map(Enum.join(lines, "\n"))
+  end
 
+  defp maybe_reload_store do
+    if Process.whereis(WorkflowStore) do
+      _ = WorkflowStore.force_reload()
+    end
+
+    :ok
+  end
+
+  defp load_config_overlay(path) when is_binary(path) do
+    case File.read(path) do
+      {:ok, content} ->
+        case yaml_to_map(content) do
+          {:ok, config_overlay} -> {:ok, config_overlay}
+          {:error, :workflow_front_matter_not_a_map} -> {:error, {:config_file_not_a_map, path}}
+          {:error, reason} -> {:error, {:config_file_parse_error, path, reason}}
+        end
+
+      {:error, :enoent} ->
+        {:ok, %{}}
+
+      {:error, reason} ->
+        {:error, {:config_file_read_error, path, reason}}
+    end
+  end
+
+  defp yaml_to_map(yaml) do
     if String.trim(yaml) == "" do
       {:ok, %{}}
     else
@@ -113,11 +150,17 @@ defmodule SymphonyElixir.Workflow do
     end
   end
 
-  defp maybe_reload_store do
-    if Process.whereis(WorkflowStore) do
-      _ = WorkflowStore.force_reload()
-    end
+  defp merge_workflow_config(workflow, config_overlay) when is_map(config_overlay) do
+    %{workflow | config: deep_merge_maps(workflow.config, config_overlay)}
+  end
 
-    :ok
+  defp deep_merge_maps(left, right) when is_map(left) and is_map(right) do
+    Map.merge(left, right, fn _key, left_value, right_value ->
+      if is_map(left_value) and is_map(right_value) do
+        deep_merge_maps(left_value, right_value)
+      else
+        right_value
+      end
+    end)
   end
 end

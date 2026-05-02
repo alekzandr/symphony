@@ -146,7 +146,11 @@ defmodule SymphonyElixir.AppServerTest do
       policy_cases = [
         %{"type" => "dangerFullAccess"},
         %{"type" => "externalSandbox", "profile" => "remote-ci"},
-        %{"type" => "workspaceWrite", "writableRoots" => ["relative/path"], "networkAccess" => true},
+        %{
+          "type" => "workspaceWrite",
+          "writableRoots" => ["relative/path"],
+          "networkAccess" => true
+        },
         %{"type" => "futureSandbox", "nested" => %{"flag" => true}}
       ]
 
@@ -178,6 +182,129 @@ defmodule SymphonyElixir.AppServerTest do
                  end
                end)
       end)
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
+  test "app server startup command renders structured codex config overrides" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-structured-codex-config-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-1002")
+      codex_binary = Path.join(test_root, "fake-codex")
+      trace_file = Path.join(test_root, "codex-structured-config.trace")
+      previous_trace = System.get_env("SYMP_TEST_CODEx_TRACE")
+
+      on_exit(fn ->
+        if is_binary(previous_trace) do
+          System.put_env("SYMP_TEST_CODEx_TRACE", previous_trace)
+        else
+          System.delete_env("SYMP_TEST_CODEx_TRACE")
+        end
+      end)
+
+      System.put_env("SYMP_TEST_CODEx_TRACE", trace_file)
+      File.mkdir_p!(workspace)
+
+      File.write!(codex_binary, """
+      #!/bin/sh
+      trace_file="${SYMP_TEST_CODEx_TRACE:-/tmp/codex-structured-config.trace}"
+      count=0
+      printf 'ARGV:%s\\n' "$*" >> "$trace_file"
+
+      while IFS= read -r line; do
+        count=$((count + 1))
+
+        case "$count" in
+          1)
+            printf '%s\\n' '{"id":1,"result":{}}'
+            ;;
+          2)
+            printf '%s\\n' '{"id":2,"result":{"thread":{"id":"thread-1002"}}}'
+            ;;
+          3)
+            printf '%s\\n' '{"id":3,"result":{"turn":{"id":"turn-1002"}}}'
+            ;;
+          4)
+            printf '%s\\n' '{"method":"turn/completed"}'
+            exit 0
+            ;;
+          *)
+            exit 0
+            ;;
+        esac
+      done
+      """)
+
+      File.chmod!(codex_binary, 0o755)
+
+      issue = %Issue{
+        id: "issue-structured-codex-config",
+        identifier: "MT-1002",
+        title: "Render structured codex config",
+        description: "Ensure structured codex config is flattened into app-server args",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-1002",
+        labels: ["backend"]
+      }
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server",
+        codex_config: %{
+          model: "gpt-oss:20b",
+          model_provider: "local_ollama",
+          model_providers: %{
+            local_ollama: %{
+              name: "Ollama",
+              base_url: "http://127.0.0.1:11434/v1"
+            }
+          }
+        }
+      )
+
+      assert {:ok, _result} = AppServer.run(workspace, "Run local Ollama config", issue)
+
+      trace = File.read!(trace_file)
+      lines = String.split(trace, "\n", trim: true)
+
+      assert argv_line = Enum.find(lines, &String.starts_with?(&1, "ARGV:"))
+      assert String.contains?(argv_line, "app-server --config model=\"gpt-oss:20b\"")
+      assert String.contains?(argv_line, "--config model_provider=\"local_ollama\"")
+      assert String.contains?(argv_line, "--config model_providers.local_ollama.name=\"Ollama\"")
+
+      assert String.contains?(
+               argv_line,
+               "--config model_providers.local_ollama.base_url=\"http://127.0.0.1:11434/v1\""
+             )
+
+      File.rm!(trace_file)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server",
+        codex_config: %{
+          model: "gpt-5.5",
+          model_provider: "openai",
+          openai_base_url: "https://api.openai.com/v1"
+        }
+      )
+
+      assert {:ok, _result} = AppServer.run(workspace, "Run OpenAI config", issue)
+
+      trace = File.read!(trace_file)
+      lines = String.split(trace, "\n", trim: true)
+
+      assert argv_line = Enum.find(lines, &String.starts_with?(&1, "ARGV:"))
+      assert String.contains?(argv_line, "app-server --config model=\"gpt-5.5\"")
+      assert String.contains?(argv_line, "--config model_provider=\"openai\"")
+      assert String.contains?(argv_line, "--config openai_base_url=\"https://api.openai.com/v1\"")
     after
       File.rm_rf(test_root)
     end
@@ -452,7 +579,8 @@ defmodule SymphonyElixir.AppServerTest do
                    |> String.trim_leading("JSON:")
                    |> Jason.decode!()
 
-                 payload["id"] == 99 and get_in(payload, ["result", "decision"]) == "acceptForSession"
+                 payload["id"] == 99 and
+                   get_in(payload, ["result", "decision"]) == "acceptForSession"
                else
                  false
                end
@@ -550,7 +678,12 @@ defmodule SymphonyElixir.AppServerTest do
                    |> Jason.decode!()
 
                  payload["id"] == 110 and
-                   get_in(payload, ["result", "answers", "mcp_tool_call_approval_call-717", "answers"]) ==
+                   get_in(payload, [
+                     "result",
+                     "answers",
+                     "mcp_tool_call_approval_call-717",
+                     "answers"
+                   ]) ==
                      ["Approve this Session"]
                else
                  false
@@ -625,12 +758,15 @@ defmodule SymphonyElixir.AppServerTest do
       on_message = fn message -> send(self(), {:app_server_message, message}) end
 
       assert {:ok, _result} =
-               AppServer.run(workspace, "Handle generic tool input", issue, on_message: on_message)
+               AppServer.run(workspace, "Handle generic tool input", issue,
+                 on_message: on_message
+               )
 
       assert_received {:app_server_message,
                        %{
                          event: :tool_input_auto_answered,
-                         answer: "This is a non-interactive session. Operator input is unavailable."
+                         answer:
+                           "This is a non-interactive session. Operator input is unavailable."
                        }}
     after
       File.rm_rf(test_root)
@@ -929,7 +1065,9 @@ defmodule SymphonyElixir.AppServerTest do
       end
 
       assert {:ok, _result} =
-               AppServer.run(workspace, "Handle supported tool calls", issue, tool_executor: tool_executor)
+               AppServer.run(workspace, "Handle supported tool calls", issue,
+                 tool_executor: tool_executor
+               )
 
       assert_received {:tool_called, "linear_graphql",
                        %{
@@ -1058,9 +1196,14 @@ defmodule SymphonyElixir.AppServerTest do
                  tool_executor: tool_executor
                )
 
-      assert_received {:tool_called, "linear_graphql", %{"query" => "query Viewer { viewer { id } }"}}
+      assert_received {:tool_called, "linear_graphql",
+                       %{"query" => "query Viewer { viewer { id } }"}}
 
-      assert_received {:app_server_message, %{event: :tool_call_failed, payload: %{"params" => %{"tool" => "linear_graphql"}}}}
+      assert_received {:app_server_message,
+                       %{
+                         event: :tool_call_failed,
+                         payload: %{"params" => %{"tool" => "linear_graphql"}}
+                       }}
     after
       File.rm_rf(test_root)
     end
@@ -1124,7 +1267,8 @@ defmodule SymphonyElixir.AppServerTest do
         labels: ["backend"]
       }
 
-      assert {:ok, _result} = AppServer.run(workspace, "Validate newline-delimited buffering", issue)
+      assert {:ok, _result} =
+               AppServer.run(workspace, "Validate newline-delimited buffering", issue)
     after
       File.rm_rf(test_root)
     end
@@ -1267,9 +1411,13 @@ defmodule SymphonyElixir.AppServerTest do
       on_message = fn message -> send(test_pid, {:app_server_message, message}) end
 
       assert {:ok, _result} =
-               AppServer.run(workspace, "Capture malformed protocol line", issue, on_message: on_message)
+               AppServer.run(workspace, "Capture malformed protocol line", issue,
+                 on_message: on_message
+               )
 
-      assert_received {:app_server_message, %{event: :malformed, payload: "{\"method\":\"turn/completed\""}}
+      assert_received {:app_server_message,
+                       %{event: :malformed, payload: "{\"method\":\"turn/completed\""}}
+
       assert_received {:app_server_message, %{event: :turn_completed}}
     after
       File.rm_rf(test_root)
