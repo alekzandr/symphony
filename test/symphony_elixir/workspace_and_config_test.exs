@@ -943,6 +943,125 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
              "--config 'model_providers.local_ollama.base_url=\"http://127.0.0.1:11434/v1\"'"
   end
 
+  test "config resolves OLLAMA_API_KEY inside Ollama Cloud codex provider config" do
+    previous_ollama_api_key = System.get_env("OLLAMA_API_KEY")
+    api_key = "ollama-cloud-api-key"
+
+    System.put_env("OLLAMA_API_KEY", api_key)
+
+    on_exit(fn ->
+      restore_env("OLLAMA_API_KEY", previous_ollama_api_key)
+    end)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      codex_command: "codex app-server",
+      codex_config: %{
+        model: "gpt-oss:20b",
+        model_provider: "ollama_cloud",
+        model_providers: %{
+          ollama_cloud: %{
+            name: "Ollama Cloud",
+            base_url: "https://ollama.com/v1",
+            api_key: "$OLLAMA_API_KEY"
+          }
+        }
+      }
+    )
+
+    assert Config.settings!().codex.config == %{
+             "model" => "gpt-oss:20b",
+             "model_provider" => "ollama_cloud",
+             "model_providers" => %{
+               "ollama_cloud" => %{
+                 "name" => "Ollama Cloud",
+                 "base_url" => "https://ollama.com/v1",
+                 "api_key" => api_key
+               }
+             }
+           }
+
+    startup_command = Config.codex_startup_command()
+
+    assert startup_command =~ "--config 'model_provider=\"ollama_cloud\"'"
+    assert startup_command =~ "--config 'model_providers.ollama_cloud.api_key=\"#{api_key}\"'"
+  end
+
+  test "config resolves OLLAMA_API_KEY inside list values in Ollama Cloud codex provider config" do
+    previous_ollama_api_key = System.get_env("OLLAMA_API_KEY")
+    api_key = "ollama-cloud-api-key"
+
+    System.put_env("OLLAMA_API_KEY", api_key)
+
+    on_exit(fn ->
+      restore_env("OLLAMA_API_KEY", previous_ollama_api_key)
+    end)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      codex_command: "codex app-server",
+      codex_config: %{
+        model: "gpt-oss:20b",
+        model_provider: "ollama_cloud",
+        model_providers: %{
+          ollama_cloud: %{
+            name: "Ollama Cloud",
+            base_url: "https://ollama.com/v1",
+            api_key: "$OLLAMA_API_KEY",
+            stop_sequences: ["$OLLAMA_API_KEY", 7, false]
+          }
+        }
+      }
+    )
+
+    assert Config.settings!().codex.config == %{
+             "model" => "gpt-oss:20b",
+             "model_provider" => "ollama_cloud",
+             "model_providers" => %{
+               "ollama_cloud" => %{
+                 "name" => "Ollama Cloud",
+                 "base_url" => "https://ollama.com/v1",
+                 "api_key" => api_key,
+                 "stop_sequences" => [api_key, 7, false]
+               }
+             }
+           }
+
+    startup_command = Config.codex_startup_command()
+
+    assert startup_command =~
+             "--config 'model_providers.ollama_cloud.stop_sequences=[\"#{api_key}\",7,false]'"
+  end
+
+  test "config treats explicit null codex config as empty overrides" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      codex_command: "codex app-server"
+    )
+
+    workflow = File.read!(Workflow.workflow_file_path())
+
+    File.write!(
+      Workflow.workflow_file_path(),
+      String.replace(
+        workflow,
+        "  command: codex app-server\n",
+        "  command: codex app-server\n  config: null\n"
+      )
+    )
+
+    assert Config.settings!().codex.config == %{}
+    assert Config.codex_startup_command() == "codex app-server"
+  end
+
+  test "schema parse normalizes explicit null codex config to an empty map" do
+    assert {:ok, settings} =
+             Schema.parse(%{
+               "tracker" => %{"kind" => "memory"},
+               "codex" => %{"command" => "codex app-server", "config" => nil}
+             })
+
+    assert settings.codex.command == "codex app-server"
+    assert settings.codex.config == %{}
+  end
+
   test "config preserves explicit nil values inside codex.config overrides" do
     write_workflow_file!(Workflow.workflow_file_path(),
       codex_command: "codex app-server",

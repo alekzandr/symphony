@@ -395,9 +395,18 @@ defmodule SymphonyElixir.Config.Schema do
           )
     }
 
+    codex_config =
+      settings.codex.config
+      |> normalize_optional_map()
+      |> resolve_codex_config_env_values()
+      |> case do
+        nil -> %{}
+        config -> config
+      end
+
     codex = %{
       settings.codex
-      | config: normalize_optional_map(settings.codex.config) || %{},
+      | config: codex_config,
         approval_policy: normalize_keys(settings.codex.approval_policy),
         turn_sandbox_policy: normalize_optional_map(settings.codex.turn_sandbox_policy)
     }
@@ -419,6 +428,31 @@ defmodule SymphonyElixir.Config.Schema do
 
   defp normalize_key(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_key(value), do: to_string(value)
+
+  defp resolve_codex_config_env_values(nil), do: nil
+
+  defp resolve_codex_config_env_values(value) when is_map(value) do
+    Enum.reduce(value, %{}, fn {key, nested_value}, acc ->
+      Map.put(acc, key, resolve_codex_config_env_values(nested_value))
+    end)
+  end
+
+  defp resolve_codex_config_env_values(value) when is_list(value),
+    do: Enum.map(value, &resolve_codex_config_env_values/1)
+
+  defp resolve_codex_config_env_values(value) when is_binary(value) do
+    if env_reference_token?(value) do
+      resolve_secret_setting(value, nil)
+    else
+      value
+    end
+  end
+
+  defp resolve_codex_config_env_values(value), do: value
+
+  defp env_reference_token?(value) when is_binary(value) do
+    Regex.match?(~r/^\$[A-Za-z_][A-Za-z0-9_]*$/, value)
+  end
 
   defp drop_nil_values(value, path \\ [])
 

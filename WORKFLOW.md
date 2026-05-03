@@ -36,6 +36,8 @@ codex:
       inherit: all
     model: gpt-5.4-mini
     model_reasoning_effort: xhigh
+    # Ollama Cloud can be configured with model_provider: ollama_cloud and
+    # model_providers.ollama_cloud.api_key: $OLLAMA_API_KEY in codex.config.
   approval_policy: never
   thread_sandbox: danger-full-access
   turn_sandbox_policy:
