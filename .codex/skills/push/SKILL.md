@@ -115,3 +115,7 @@ gh pr view --json url -q .url
   - Use the `pull` skill for non-fast-forward or stale-branch issues.
   - Surface auth, permissions, or workflow restrictions directly instead of
     changing remotes or protocols.
+- This skill only handles the push and PR creation. It does **not** perform
+  any Linear state transitions. After this skill completes, return to the
+  calling workflow (e.g. WORKFLOW.md) and continue the remaining steps —
+  including moving the issue to `Human Review` — before ending the session.
