@@ -557,12 +557,27 @@ defmodule SymphonyElixir.AppServerTest do
                    case get_in(payload, ["params", "dynamicTools"]) do
                      [
                        %{
+                         "description" => workspace_description,
+                         "inputSchema" => %{
+                           "properties" => %{
+                             "contextLines" => _,
+                             "maxFiles" => _,
+                             "paths" => _,
+                             "query" => _
+                           },
+                           "required" => ["query"]
+                         },
+                         "name" => "workspace_research"
+                       },
+                       %{
                          "description" => description,
                          "inputSchema" => %{"required" => ["query"]},
                          "name" => "linear_graphql"
                        }
                      ] ->
-                       description =~ "Linear"
+                       workspace_description =~ "Ollama" and
+                         workspace_description =~ "workspace" and
+                         description =~ "Linear"
 
                      _ ->
                        false

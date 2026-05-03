@@ -3,8 +3,22 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
 
   alias SymphonyElixir.Codex.DynamicTool
 
-  test "tool_specs advertises the linear_graphql input contract" do
+  test "tool_specs advertises the workspace research and linear GraphQL input contracts" do
     assert [
+             %{
+               "description" => workspace_description,
+               "inputSchema" => %{
+                 "properties" => %{
+                   "contextLines" => _,
+                   "maxFiles" => _,
+                   "paths" => _,
+                   "query" => _
+                 },
+                 "required" => ["query"],
+                 "type" => "object"
+               },
+               "name" => "workspace_research"
+             },
              %{
                "description" => description,
                "inputSchema" => %{
@@ -19,6 +33,8 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
              }
            ] = DynamicTool.tool_specs()
 
+    assert workspace_description =~ "Ollama"
+    assert workspace_description =~ "workspace"
     assert description =~ "Linear"
   end
 
@@ -30,7 +46,7 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
     assert Jason.decode!(response["output"]) == %{
              "error" => %{
                "message" => ~s(Unsupported dynamic tool: "not_a_real_tool".),
-               "supportedTools" => ["linear_graphql"]
+               "supportedTools" => ["workspace_research", "linear_graphql"]
              }
            }
 
@@ -40,6 +56,53 @@ defmodule SymphonyElixir.Codex.DynamicToolTest do
                "text" => response["output"]
              }
            ]
+  end
+
+  test "workspace_research delegates search and summarization to the local helper" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-dynamic-tool-workspace-research-#{System.unique_integer([:positive])}"
+      )
+
+    try do
+      workspace = Path.join(test_root, "workspace")
+      File.mkdir_p!(Path.join(workspace, "lib"))
+      File.write!(Path.join(workspace, "README.md"), "requested path alpha\n")
+      File.write!(Path.join(workspace, "lib/example.ex"), "defmodule Example do\n  # needle\nend\n")
+
+      test_pid = self()
+
+      response =
+        DynamicTool.execute(
+          "workspace_research",
+          %{
+            "query" => "needle",
+            "paths" => ["README.md"]
+          },
+          workspace: workspace,
+          ollama_client: fn url, request, timeout_ms ->
+            send(test_pid, {:ollama_client_called, url, request, timeout_ms})
+            {:ok, %{"message" => %{"content" => "workspace summary"}}}
+          end
+        )
+
+      assert_received {:ollama_client_called, url, request, 15_000}
+      assert url == "http://127.0.0.1:11434/api/chat"
+      assert request["model"] == "gemma4:e2b"
+
+      payload = Jason.decode!(response["output"])
+
+      assert response["success"] == true
+      assert payload["status"] == "ok"
+      assert payload["summary"] == "workspace summary"
+      assert payload["requestedPaths"] == ["README.md"]
+      assert payload["workerHost"] == nil
+      assert payload["sources"] |> Enum.map(& &1["kind"]) |> Enum.sort() == ["requested", "search"]
+      assert payload["sources"] |> Enum.map(& &1["path"]) |> Enum.sort() == ["README.md", "lib/example.ex"]
+    after
+      File.rm_rf(test_root)
+    end
   end
 
   test "linear_graphql returns successful GraphQL responses as tool text" do
