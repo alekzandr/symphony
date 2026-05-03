@@ -23,6 +23,10 @@ This directory contains the current Elixir/OTP implementation of Symphony, based
 During app-server sessions, Symphony also serves a client-side `linear_graphql` tool so that repo
 skills can make raw Linear GraphQL calls.
 
+It also serves `workspace_research`, a local helper for repository search and file reading. The
+helper searches the workspace, reads the relevant snippets, and asks a local Ollama model
+(`gemma4:e2b` by default at `http://127.0.0.1:11434`) to summarize the findings.
+
 If a claimed issue moves to a terminal state (`Done`, `Closed`, `Cancelled`, or `Duplicate`),
 Symphony stops the active agent for that issue and cleans up matching workspaces.
 
@@ -144,6 +148,9 @@ hooks:
 codex:
   command: "$CODEX_BIN --config 'model=\"gpt-5.5\"' app-server"
 ```
+
+Override the workspace helper under `codex.config.local_search` if you want a different Ollama
+model, base URL, or timeout.
 
 - If `WORKFLOW.md` is missing or has invalid YAML at startup, Symphony does not boot.
 - If a later reload fails, Symphony keeps running with the last known good workflow and logs the

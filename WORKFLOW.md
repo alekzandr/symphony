@@ -75,6 +75,9 @@ Instructions:
 2. Only stop early for a true blocker (missing required auth/permissions/secrets). If blocked, record it in the workpad and move the issue according to workflow.
 3. Final message must report completed actions and blockers only. Do not include "next steps for user".
 
+When you need to search or read repository files, prefer the `workspace_research` dynamic tool so
+the small local model can do the inspection work before the main agent spends priced tokens.
+
 Work only in the provided repository copy. Do not touch any other path.
 
 ## Prerequisite: Linear MCP or `linear_graphql` tool is available

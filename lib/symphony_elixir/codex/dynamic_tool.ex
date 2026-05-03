@@ -3,7 +3,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   Executes client-side tool calls requested by Codex app-server turns.
   """
 
-  alias SymphonyElixir.Linear.Client
+  alias SymphonyElixir.{Codex.LocalResearch, Linear.Client}
 
   @linear_graphql_tool "linear_graphql"
   @linear_graphql_description """
@@ -26,9 +26,41 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     }
   }
 
+  @workspace_research_tool "workspace_research"
+  @workspace_research_description """
+  Search workspace files, read the relevant excerpts, and summarize them with a local Ollama model.
+  """
+  @workspace_research_input_schema %{
+    "type" => "object",
+    "additionalProperties" => false,
+    "required" => ["query"],
+    "properties" => %{
+      "query" => %{
+        "type" => "string",
+        "description" => "Question or search request to run against the workspace."
+      },
+      "paths" => %{
+        "type" => "array",
+        "description" => "Optional workspace-relative or absolute file paths to prioritize.",
+        "items" => %{"type" => "string"}
+      },
+      "maxFiles" => %{
+        "type" => ["integer", "null"],
+        "description" => "Optional maximum number of files to include."
+      },
+      "contextLines" => %{
+        "type" => ["integer", "null"],
+        "description" => "Optional context line count around matching excerpts."
+      }
+    }
+  }
+
   @spec execute(String.t() | nil, term(), keyword()) :: map()
   def execute(tool, arguments, opts \\ []) do
     case tool do
+      @workspace_research_tool ->
+        execute_workspace_research(arguments, opts)
+
       @linear_graphql_tool ->
         execute_linear_graphql(arguments, opts)
 
@@ -46,6 +78,11 @@ defmodule SymphonyElixir.Codex.DynamicTool do
   def tool_specs do
     [
       %{
+        "name" => @workspace_research_tool,
+        "description" => @workspace_research_description,
+        "inputSchema" => @workspace_research_input_schema
+      },
+      %{
         "name" => @linear_graphql_tool,
         "description" => @linear_graphql_description,
         "inputSchema" => @linear_graphql_input_schema
@@ -62,6 +99,16 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     else
       {:error, reason} ->
         failure_response(tool_error_payload(reason))
+    end
+  end
+
+  defp execute_workspace_research(arguments, opts) do
+    case LocalResearch.search(arguments, opts) do
+      {:ok, response} ->
+        dynamic_tool_response(true, encode_payload(response))
+
+      {:error, reason} ->
+        failure_response(workspace_research_error_payload(reason))
     end
   end
 
@@ -198,6 +245,83 @@ defmodule SymphonyElixir.Codex.DynamicTool do
     %{
       "error" => %{
         "message" => "Linear GraphQL tool execution failed.",
+        "reason" => inspect(reason)
+      }
+    }
+  end
+
+  defp workspace_research_error_payload(:missing_query) do
+    %{
+      "error" => %{
+        "message" => "`workspace_research` requires a non-empty `query` string."
+      }
+    }
+  end
+
+  defp workspace_research_error_payload(:invalid_arguments) do
+    %{
+      "error" => %{
+        "message" => "`workspace_research` expects either a search string or an object with `query`, optional `paths`, `maxFiles`, and `contextLines`."
+      }
+    }
+  end
+
+  defp workspace_research_error_payload(:invalid_paths) do
+    %{
+      "error" => %{
+        "message" => "`workspace_research.paths` must be an array of workspace-relative path strings."
+      }
+    }
+  end
+
+  defp workspace_research_error_payload(:missing_workspace) do
+    %{
+      "error" => %{
+        "message" => "`workspace_research` requires workspace context from the app-server session."
+      }
+    }
+  end
+
+  defp workspace_research_error_payload({:workspace_unreadable, path, reason}) do
+    %{
+      "error" => %{
+        "message" => "Symphony could not read workspace `#{path}`.",
+        "reason" => inspect(reason)
+      }
+    }
+  end
+
+  defp workspace_research_error_payload({:invalid_workspace_path, path}) do
+    %{
+      "error" => %{
+        "message" => "`workspace_research.paths` entry `#{path}` must stay within the workspace."
+      }
+    }
+  end
+
+  defp workspace_research_error_payload({:search_command_failed, status, output}) do
+    %{
+      "error" => %{
+        "message" => "`workspace_research` failed to search the workspace.",
+        "status" => status,
+        "output" => output
+      }
+    }
+  end
+
+  defp workspace_research_error_payload({:search_command_failed, reason}) do
+    %{
+      "error" => %{
+        "message" => "`workspace_research` failed to search the workspace.",
+        "reason" => inspect(reason)
+      }
+    }
+  end
+
+  defp workspace_research_error_payload(reason) do
+    %{
+      "error" => %{
+        "message" => "`workspace_research` tool execution failed.",
         "reason" => inspect(reason)
       }
     }
