@@ -200,12 +200,19 @@ defmodule SymphonyElixir.AppServerTest do
       codex_binary = Path.join(test_root, "fake-codex")
       trace_file = Path.join(test_root, "codex-structured-config.trace")
       previous_trace = System.get_env("SYMP_TEST_CODEx_TRACE")
+      previous_ollama_api_key = System.get_env("OLLAMA_API_KEY")
 
       on_exit(fn ->
         if is_binary(previous_trace) do
           System.put_env("SYMP_TEST_CODEx_TRACE", previous_trace)
         else
           System.delete_env("SYMP_TEST_CODEx_TRACE")
+        end
+
+        if is_binary(previous_ollama_api_key) do
+          System.put_env("OLLAMA_API_KEY", previous_ollama_api_key)
+        else
+          System.delete_env("OLLAMA_API_KEY")
         end
       end)
 
@@ -305,6 +312,51 @@ defmodule SymphonyElixir.AppServerTest do
       assert String.contains?(argv_line, "app-server --config model=\"gpt-5.5\"")
       assert String.contains?(argv_line, "--config model_provider=\"openai\"")
       assert String.contains?(argv_line, "--config openai_base_url=\"https://api.openai.com/v1\"")
+
+      File.rm!(trace_file)
+
+      ollama_cloud_api_key = "ollama-cloud-token"
+      System.put_env("OLLAMA_API_KEY", ollama_cloud_api_key)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        codex_command: "#{codex_binary} app-server",
+        codex_config: %{
+          model: "gpt-oss:20b",
+          model_provider: "ollama_cloud",
+          model_providers: %{
+            ollama_cloud: %{
+              name: "Ollama Cloud",
+              base_url: "https://ollama.com/v1",
+              api_key: "$OLLAMA_API_KEY"
+            }
+          }
+        }
+      )
+
+      assert {:ok, _result} = AppServer.run(workspace, "Run Ollama Cloud config", issue)
+
+      trace = File.read!(trace_file)
+      lines = String.split(trace, "\n", trim: true)
+
+      assert argv_line = Enum.find(lines, &String.starts_with?(&1, "ARGV:"))
+      assert String.contains?(argv_line, "app-server --config model=\"gpt-oss:20b\"")
+      assert String.contains?(argv_line, "--config model_provider=\"ollama_cloud\"")
+
+      assert String.contains?(
+               argv_line,
+               "--config model_providers.ollama_cloud.name=\"Ollama Cloud\""
+             )
+
+      assert String.contains?(
+               argv_line,
+               "--config model_providers.ollama_cloud.base_url=\"https://ollama.com/v1\""
+             )
+
+      assert String.contains?(
+               argv_line,
+               "--config model_providers.ollama_cloud.api_key=\"ollama-cloud-token\""
+             )
     after
       File.rm_rf(test_root)
     end
