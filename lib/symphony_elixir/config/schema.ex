@@ -440,10 +440,19 @@ defmodule SymphonyElixir.Config.Schema do
   defp resolve_codex_config_env_values(value) when is_list(value),
     do: Enum.map(value, &resolve_codex_config_env_values/1)
 
-  defp resolve_codex_config_env_values(value) when is_binary(value),
-    do: resolve_secret_setting(value, nil)
+  defp resolve_codex_config_env_values(value) when is_binary(value) do
+    if env_reference_token?(value) do
+      resolve_secret_setting(value, nil)
+    else
+      value
+    end
+  end
 
   defp resolve_codex_config_env_values(value), do: value
+
+  defp env_reference_token?(value) when is_binary(value) do
+    Regex.match?(~r/^\$[A-Za-z_][A-Za-z0-9_]*$/, value)
+  end
 
   defp drop_nil_values(value, path \\ [])
 
