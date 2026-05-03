@@ -1,0 +1,33 @@
+# Build artifacts
+/_build/test/
+/cover/
+/doc/
+/.fetch
+
+# Dependencies
+# (deps/ and _build/dev/ are intentionally tracked in this project)
+
+# Crash dumps
+erl_crash.dump
+
+# Mix archives and tarballs
+*.ez
+*.tar
+
+# Logs
+/log/
+
+# Temporary files
+/tmp/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Editor / tooling
+.elixir_ls/
+.lexical/
+.idea/
+*.swp
+*.swo
